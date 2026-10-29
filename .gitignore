@@ -1,0 +1,3 @@
+*.csv
+ctgov_status_cache.json
+__pycache__/
