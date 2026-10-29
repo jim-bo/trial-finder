@@ -77,7 +77,11 @@ def parse_space(text: str) -> dict[str, str]:
 
 # --- classification -----------------------------------------------------------------------------------------
 
-NEGATED_METS = re.compile(r"\b(no|absence of|without|free of|non|not)\b[^;.]{0,40}?(metasta|recurren)\w*", re.I)
+NEGATED_METS = re.compile(r"\b(no|absence of|without|free of|non|not)\b[^;.]{0,60}?(metasta|recurren)\w*"
+                          r"(\s*(or|and|/)\s*(\w+\s+)?(metasta|recurren)\w*)?", re.I)
+# early-disease phrases that contain an "advanced" word
+NOT_ADVANCED = re.compile(r"risk of (\w+\s+){0,2}recurren\w*|(lymph[- ]?node|nodal|axillary|regional)\s+"
+                          r"(\w+\s+)?metasta\w*|micro-?metasta\w*", re.I)
 ADVANCED = re.compile(r"metasta|unresectable|inoperable|recurren|stage\s*iv|\bm1\b|relapsed|refractory|"
                       r"progress|advanced", re.I)
 LOCAL_ONLY_ADVANCED = re.compile(r"locally[\s-]advanced", re.I)
@@ -91,7 +95,7 @@ BOTH = re.compile(r"any stage|all stages|early or (metastatic|advanced)|stage\s*
 def settings(sp: dict[str, str]) -> list[str]:
     """'advanced', 'early' or 'any' (a space can land in both advanced and early)."""
     text = " ".join([sp["Cancer type"], sp["Disease extent"]])
-    adv_text = LOCAL_ONLY_ADVANCED.sub(" ", NEGATED_METS.sub(" ", text))
+    adv_text = LOCAL_ONLY_ADVANCED.sub(" ", NOT_ADVANCED.sub(" ", NEGATED_METS.sub(" ", text)))
     # treatment "for metastatic disease", required or excluded, also places a cohort in the advanced setting
     adv_text += " " + " ".join(re.findall(r"(?:for|in the)\s+(?:\w+\s+){0,3}?(?:metastatic|advanced|recurrent)",
                                           sp["Prior treatment required"] + " " + sp["Prior treatment excluded"],
@@ -107,12 +111,13 @@ def settings(sp: dict[str, str]) -> list[str]:
     return out or ["any"]
 
 
-HER2_POS = re.compile(r"her[- ]?2[\s-]*(\(erbb2\)\s*)?(positive|\+|3\+|amplif|over-?express)|erbb2 amplif", re.I)
-HER2_NEG = re.compile(r"her[- ]?2[\s-]*(negative|-|low|0|1\+|2\+)|her2-?(low|ultralow)", re.I)
-HR = (r"(\ber\b|\bpr\b|\bhr\b|\bpgr\b|estrogen|oestrogen|progesterone|hormone)(\s*receptors?)?"
-      r"[\s-]*(\((er|pr|hr|pgr)\)\s*)?")
-HR_POS = re.compile(HR + r"(positive|\+|>|≥|expression|-?rich)", re.I)
-HR_NEG = re.compile(HR + r"(negative|-(?!\w)|<|≤|low)", re.I)
+HER2 = r"(her[- ]?2|human epidermal growth factor receptor[- ]?2|erbb2)[\s-]*(\((her2|erbb2)\)\s*)?"
+HER2_POS = re.compile(HER2 + r"(status\s*)?(positiv|\+|3\+|amplif|over-?express)", re.I)
+HER2_NEG = re.compile(HER2 + r"(status\s*)?(negativ|-(?!\w)|low|ultra-?low|0|1\+|2\+)", re.I)
+HR = (r"(\ber\b|\bpr\b|\bhr\b|\bpgr\b|estrogen|oestrogen|progesterone|hormone)([\s-]*receptors?)?"
+      r"[\s-]*(\((er|pr|hr|pgr)\)\s*)?(expression\s*|staining\s*|status\s*)?")
+HR_POS = re.compile(HR + r"(positiv|\+|(>|≥|greater than|at least)\s*[1-9]|-?rich)", re.I)
+HR_NEG = re.compile(HR + r"(negativ|-(?!\w)|(<|≤|less than)\s*\d|low)", re.I)
 TNBC = re.compile(r"triple[- ]negative|\btnbc\b", re.I)
 
 
@@ -123,7 +128,8 @@ def breast_subtypes(sp: dict[str, str]) -> list[str]:
         out.append("her2-positive")
     if TNBC.search(text):
         out.append("triple-negative")
-    if HR_POS.search(text) and not HER2_POS.search(text):
+    if (HR_POS.search(text) or re.search(r"\besr1\b", text, re.I)) and not HER2_POS.search(text) \
+            and "triple-negative" not in out:
         out.append("hr-positive-her2-negative")
     if not out and HER2_NEG.search(text):
         if HR_NEG.search(text):
@@ -137,6 +143,7 @@ CANCERS = {
     "breast": {
         "title": "Breast cancer",
         "match": re.compile(r"breast", re.I),
+        "exclude": re.compile(r"(exclud\w*|except|other than|not|non-?)\s+(\w+\s+){0,2}breast", re.I),
         "default_type": re.compile(r"(invasive |metastatic |advanced )?breast (cancer|carcinoma)", re.I),
         "subtypes": breast_subtypes,
         "subtype_titles": {
@@ -226,35 +233,45 @@ SHORT = {"Disease extent": "Extent", "Prior treatment required": "Prior tx requi
          "Prior treatment excluded": "Prior tx excluded"}
 
 
-def render_space(row: dict, default_type: re.Pattern) -> str:
-    """One cohort in two lines; fields the trial leaves open are omitted."""
-    sp = row["space"]
-    head = (f"**{row['nct_id']}** (cohort {row['space_number']}/{row['n_spaces']}) "
-            f"{phase_label(row['phases'])}, {row['status'].replace('_', ' ').lower()}. {row['title']} "
-            f"[{row['where']}]")
-    parts = []
-    for _, label in FIELDS:
-        value = sp[label]
-        if not value or (label == "Cancer type" and default_type.fullmatch(value)):
-            continue
-        parts.append(f"{SHORT.get(label, label)}: {value}")
-    return head + "\n" + " | ".join(parts)
+def render_trial(rows: list[dict], default_type: re.Pattern) -> str:
+    """One trial: a header line, then one line per cohort; fields the trial leaves open are omitted."""
+    r0 = rows[0]
+    out = [f"**{r0['nct_id']}** {phase_label(r0['phases'])}, {r0['status'].replace('_', ' ').lower()}. "
+           f"{r0['title']} [{r0['where']}]"]
+    for row in rows:
+        parts = []
+        for _, label in FIELDS:
+            value = row["space"][label]
+            if not value or (label == "Cancer type" and default_type.fullmatch(value)):
+                continue
+            parts.append(f"{SHORT.get(label, label)}: {value}")
+        out.append(f"- Cohort {row['space_number']} of {row['n_spaces']}: " + " | ".join(parts))
+    return "\n".join(out)
+
+
+def render(chunk: list[dict], default_type: re.Pattern) -> str:
+    trials = defaultdict(list)
+    for row in chunk:
+        trials[row["nct_id"]].append(row)
+    return "\n\n".join(render_trial(rows, default_type) for rows in trials.values())
 
 
 def header(title: str, built: str) -> str:
     return (f"# {title}\n\n"
             f"Trial cohorts (\"spaces\") summarized by MatchMiner-AI from ClinicalTrials.gov, status checked "
-            f"{built}. Each entry is one cohort a patient could join: every listed item must fit. A field "
-            f"that is not shown is not restricted. Trial page: https://clinicaltrials.gov/study/<NCT id>. Data: ksg-dfci/mmai-synthetic-1225 (CC BY-NC 4.0); "
+            f"{built}. Each trial is followed by its cohorts; a cohort is one group a patient could join, "
+            f"and every item listed for it must fit. A field that is not shown is not restricted. Trial page: https://clinicaltrials.gov/study/<NCT id>. Data: ksg-dfci/mmai-synthetic-1225 (CC BY-NC 4.0); "
             f"reformatted and filtered to open trials.\n")
 
 
 def build(spaces_csv: Path, cancer: str, out_dir: Path, cache: Path) -> None:
     cfg = CANCERS[cancer]
     df = pd.read_csv(spaces_csv, usecols=["nct_id", "title", "this_space", "space_number"])
-    df["space"] = df["this_space"].map(parse_space)
-    df = df[df["space"].map(lambda s: bool(cfg["match"].search(s["Cancer type"])))].copy()
     df["n_spaces"] = df.groupby("nct_id")["nct_id"].transform("size")
+    df["space"] = df["this_space"].map(parse_space)
+    keep = df["space"].map(lambda s: bool(cfg["match"].search(s["Cancer type"]))
+                           and not cfg["exclude"].search(s["Cancer type"]))
+    df = df[keep].copy()
     print(f"{cancer}: {len(df)} spaces in {df.nct_id.nunique()} trials before the status check")
 
     status = fetch_status(sorted(df.nct_id.unique()), cache)
@@ -294,7 +311,7 @@ def build(spaces_csv: Path, cancer: str, out_dir: Path, cache: Path) -> None:
                 chunk = items[p * PART_SIZE:(p + 1) * PART_SIZE]
                 title = (f"{cfg['title']} · {SETTING_TITLES[setting].split(':')[0]} · "
                          f"{cfg['subtype_titles'][sub]} · file {p + 1} of {n_parts}")
-                body = header(title, built) + "\n" + "\n\n".join(render_space(r, cfg["default_type"]) for r in chunk) + "\n"
+                body = header(title, built) + "\n" + render(chunk, cfg["default_type"]) + "\n"
                 body += f"\n---\nEnd of file {p + 1} of {n_parts}."
                 if p + 1 < n_parts:
                     body += f" Next: {RAW_BASE}catalog/{cancer}/{setting}--{sub}--{p + 2}.md"

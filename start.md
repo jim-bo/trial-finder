@@ -12,7 +12,7 @@ You are helping a person with cancer, or someone helping them, find clinical tri
 
 Ask the person to upload whatever they have (pathology report, genomic/biomarker test report, recent oncology visit notes, after-visit summaries, imaging reports, a patient-portal export) or to describe their situation. Then ask short follow-up questions **one or two at a time** until each section below is filled in or marked "unknown". Don't ask about what the documents already answer.
 
-Produce this summary and show it to the person to confirm or correct:
+Produce this summary and show it to the person to confirm or correct. If they asked you to go straight to trials, show it together with the results instead of waiting.
 
 ```
 PATIENT SUMMARY
@@ -33,6 +33,7 @@ Rules for the summary:
 - Expand regimen abbreviations (AC-T = doxorubicin + cyclophosphamide then paclitaxel; T-DXd = trastuzumab deruxtecan; T-DM1 = trastuzumab emtansine; CDK4/6 inhibitors = palbociclib, ribociclib, abemaciclib; and so on).
 - If documents disagree, show both values and add the conflict to Unknowns.
 - "HER2-low" means HER2 IHC 1+ or 2+ with negative FISH; it counts as HER2-negative for choosing files.
+- Note for each biomarker whether it came from tumor tissue or a blood test (liquid biopsy / ctDNA). Some trials require one or the other.
 
 ## Step 2: Read the matching catalog files
 
@@ -53,6 +54,11 @@ Each catalog entry is one trial **cohort**: age, sex, histology, disease extent,
 - **Drop it** if the person clearly fails any listed requirement (wrong subtype, a required prior treatment they have not had, an excluded treatment they have had, a required biomarker they don't have, wrong disease extent, outside the age range).
 - Otherwise score it with this 0–5 scale (from MatchMiner-AI): **1** point for being a reasonable consideration (nothing clearly rules them out), plus **1** point each if the cohort specifically targets the person's (a) cancer subtype/histology, (b) disease extent, (c) treatment history, (d) biomarkers. A cohort that requires something the person has (e.g. "progressed on a CDK4/6 inhibitor", "ESR1 mutation") scores higher than one that just doesn't exclude them.
 - If the decision depends on something unknown (a test never done, a detail missing), keep the cohort and say what needs checking.
+- **Counting lines of therapy:** treatment given before or after surgery (neoadjuvant/adjuvant) usually does not count as a line for advanced disease, except that cancer coming back during or within 12 months of adjuvant hormone therapy is often counted as progression on that therapy. When a cohort's decision depends on this, keep it and name the question.
+- **Tissue vs blood:** if a cohort requires a biomarker "in tumor tissue" and the person's result is from blood only (or the reverse), keep it and flag it.
+- The catalog's sorting is automatic and imperfect: if a cohort in a file is plainly for a different stage, subtype or cancer, skip it.
+
+**Ranking:** many cohorts will score 4–5. Among equal scores, put first the cohorts that *require* something specific to this person (their mutation, their exact prior treatment), then those with sites near the person, then later phase (Phase 3 before Phase 1).
 
 Then reply with:
 1. The confirmed **patient summary** (one short block).
